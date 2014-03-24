@@ -5,7 +5,7 @@ oramstart is the initial verision.
 
 USE make to build binary , the program  needs nvcc to compile.
 
-if in tacc stampede machine, do "module load cuda", "make " the program, run "./jobscrp" to send executable to the compute node
+if in tacc stampede machine, do "module load cuda", "make " the program, run "sbatch jobscrp" to send executable to the compute node
 use "watch showq -u" to track the status of the job.
 
 
