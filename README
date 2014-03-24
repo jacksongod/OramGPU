@@ -1,0 +1,12 @@
+THIS is ORAM GPU project
+
+The project maps Oblivious RAM algorithm to GPGPU programming.
+oramstart is the initial verision.
+
+USE make to build binary , the program  needs nvcc to compile.
+
+if in tacc stampede machine, do "module load cuda", "make " the program, run "./jobscrp" to send executable to the compute node
+use "watch showq -u" to track the status of the job.
+
+
+pan19@utexas.edu
