@@ -11,3 +11,34 @@ public:
   
 
 };
+
+template <int SIZE>
+class TDBlock {
+
+public:
+  uint32_t data[SIZE/4];
+  void init(void){
+     for (int i=0; i< SIZE/4; i++){
+         data[i] = rand();         
+     }
+
+  }
+};
+
+
+template <int B, int SIZE>
+class TDBucket{
+
+public:
+  TDBlock<SIZE> block[B];
+  void init(void){
+     for (int i=0; i< B; i++){
+         block[i].init();         
+     }
+
+  }
+
+};
+
+
+
