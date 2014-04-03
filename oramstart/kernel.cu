@@ -6,6 +6,7 @@
 #include <string.h>
 #include "bucket.h"
 #include <curand_kernel.h>
+#include <cuda.h>
 
 #define CUDATHREADNUMLOG 10
 #define CUDATHREADNUM (1<<CUDATHREADNUMLOG)
@@ -21,7 +22,7 @@
 
 #define STASHSIZE 256
 
-#define ACCESSNUM 10
+#define ACCESSNUM 100
 /**
  * Main
  */
@@ -51,6 +52,7 @@ __global__ void oramshare(uint16_t* position_table, uint32_t* access_script,uint
 	__shared__ uint16_t localtable[1<<(BLOCKNUMLOG)];   //8KB  when blocknumlog = 12
         __shared__  uint16_t newposition; 
         __shared__ uint32_t stashcount;
+		__shared__ uint32_t maxstashcount;
         __shared__ uint32_t pathcount;
         __shared__ uint32_t stashaccessloc[(LEAFNUMLOG+1)*BLOCKPERBUCKET];
         __shared__ uint32_t writebackloc[(LEAFNUMLOG+1)*BLOCKPERBUCKET];
@@ -73,6 +75,7 @@ __global__ void oramshare(uint16_t* position_table, uint32_t* access_script,uint
   // if (tid<12) streepathlock[tid] = 0;
    //if (tid ==256) pathcount = 24;
    if (tid ==512) stashcount = STASHSIZE;
+   if(tid == 384) maxstashcount = 256;
   //  if (tid< (LEAFNUMLOG+1)){
   //  memset(&treepathlock[tid],0x0,4);
     
@@ -110,6 +113,7 @@ __global__ void oramshare(uint16_t* position_table, uint32_t* access_script,uint
            int treeindex = calcindex(tid/2, pathid);
            //printf("id: %d, index %d\t",tid,treeindex );
            uint16_t id = metatree[treeindex].id[tid%2];
+		   metatree[treeindex].id[tid%2] = 0;
            if((id>>15) == 1){   // if data is valid 
             // printf("id: %d valid data \t ", tid); 
               while(true){
@@ -119,7 +123,7 @@ __global__ void oramshare(uint16_t* position_table, uint32_t* access_script,uint
                     stash[startindex] = id &0x7ff; 
                     
                  startindex = (startindex+1)%STASHSIZE; 
-                    //atomicSub(&stashcount,1);
+                    atomicSub(&stashcount,1);
               //       printf("id: %d, data id %d\n",tid,stash[startindex%STASHSIZE]);
               //      checktable[i*24+tid] = stash[startindex] ;
               //      checktable2[i*24+tid] = pathid;
@@ -129,11 +133,12 @@ __global__ void oramshare(uint16_t* position_table, uint32_t* access_script,uint
                  startindex = (startindex+1)%STASHSIZE; 
               }
             //   printf("out\n");
-           }  
+		   }
+		   
                      
          }  
          __syncthreads();
-         
+         if (tid==0 ) atomicMin(&maxstashcount, stashcount);
         /* if (tid < STASHSIZE){
              if (stashlock[tid]!=0){
 		   int myblockid = stash[tid];
@@ -194,9 +199,9 @@ __global__ void oramshare(uint16_t* position_table, uint32_t* access_script,uint
                           break;
                        } 
                        writebackloc[blockloc] = stid; 
-                       metatree[treeindex].id[secondblock] = myblockid;
+                       metatree[treeindex].id[secondblock] = 0x8000|myblockid;
                        stashlock[stid] = 0;
-                   //    atomicAdd(&stashcount,1);
+                       atomicAdd(&stashcount,1);
                    //    atomicSub(&pathcount,1);
                        break; 
                    } 
@@ -207,7 +212,7 @@ __global__ void oramshare(uint16_t* position_table, uint32_t* access_script,uint
                    
                 }		       
 
-             }
+			 } 
 
 
          }else if(tid<896) {          //other threads bring in the data from tree to data stash. 
@@ -235,7 +240,7 @@ __global__ void oramshare(uint16_t* position_table, uint32_t* access_script,uint
 
     }
 
-        
+    if (tid == 0)    printf("max stash size %ud\n",256-maxstashcount);
 }
 __global__ void setup_kernel(curandState *state)
 {
