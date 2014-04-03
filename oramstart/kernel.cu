@@ -186,12 +186,14 @@ __global__ void oramshare(uint16_t* position_table, uint32_t* access_script,uint
                    int level = __clz((sortkey<<21)|0x00100000); 
                    int treeindex = calcindex(level,pathid);
                 while(true){
-                 //  if (pathcount<=0) break; 
-                   if(!atomicCAS(&treepathlock[(level<<1)+secondblock],0,1)){
+                 //  if (pathcount<=0) break;
+                   int blockloc = (level<<1) +secondblock;
+                   if(!atomicCAS(&treepathlock[blockloc],0,1)){
                        if (atomicCAS(&streepathlock[stid],0,1)) {
-                          treepathlock[(level<<1)+secondblock] = 0;
+                          treepathlock[blockloc] = 0;
                           break;
                        } 
+                       writebackloc[blockloc] = stid; 
                        metatree[treeindex].id[secondblock] = myblockid;
                        stashlock[stid] = 0;
                    //    atomicAdd(&stashcount,1);
@@ -212,7 +214,6 @@ __global__ void oramshare(uint16_t* position_table, uint32_t* access_script,uint
               int stid = tid - STASHSIZE*BLOCKPERBUCKET; 
               int bucketid= stid/16;
              int treeindex = calcindex(bucketid/2, pathid);
-          //printf("id: %d, index %d\t",tid,treeindex );
               int whichdata = stid%16;
               int whichblock = bucketid%2;
               datastash[stashaccessloc [bucketid]] = datatree[treeindex].block[whichblock].data[whichdata]; 
@@ -222,11 +223,15 @@ __global__ void oramshare(uint16_t* position_table, uint32_t* access_script,uint
 
          // bring data back from stash to tree 
          if (tid < 384){
-            
+           int bucketid = tid/16;
+             int treeindex = calcindex(bucketid/2, pathid);
+              int whichdata = tid%16;
+              int whichblock = bucketid%2;
+             datatree[treeindex].block[whichblock].data[whichdata] = datastash[writebackloc[bucketid]];       
 
-         } 
+         }  
+
         
-         __syncthreads();
 
     }
 
@@ -239,6 +244,7 @@ int id = threadIdx.x;
 no offset */
 curand_init(1234, id, 0, &state[id]);
 }
+
 
 int main(int argc, char** argv)
 {
@@ -263,62 +269,38 @@ int main(int argc, char** argv)
         p_table[i] = 0xdead;
     }
     printf("finished initialize raw p_table\n");
-    for (int i = 0; i< (TREESIZE-1); i++){
-            int temp = i;
-            while (temp <(TREESIZE-1)){
-                temp = temp*2 + 1+ 1*(temp%2);
-            }
-             temp = (temp-1)/2 + 1 - (1<<LEAFNUMLOG);
+    int startpoint =  (1<<LEAFNUMLOG) -1 ; 
+    for (int i =0; i< startpoint;i++){
+	oramtree[i].initzero();
+
+    }
+    for (int i = startpoint; i< (TREESIZE-1); i++){
+            int temp = i- startpoint;
         doramtree[i].init(); 
-        oramtree[i].id[0] =( 0x8000 |rand()%(1<<BLOCKNUMLOG)); 
-        p_table[oramtree[i].id[0]%(1<<BLOCKNUMLOG)] = temp; 
-        oramtree[i].id[1] =( 0x8000| rand()%(1<<BLOCKNUMLOG)); 
-        p_table[oramtree[i].id[1]%(1<<BLOCKNUMLOG)] = temp; 
+        oramtree[i].init(temp*BLOCKPERBUCKET); 
+        p_table[BLOCKPERBUCKET*temp] = temp;
+        p_table[BLOCKPERBUCKET*temp+1] = temp;
+        
+
+        //oramtree[i].id[0] =( 0x8000 |rand()%(1<<BLOCKNUMLOG)); 
+        //p_table[oramtree[i].id[0]%(1<<BLOCKNUMLOG)] = temp; 
+        //oramtree[i].id[1] =( 0x8000| rand()%(1<<BLOCKNUMLOG)); 
+        //p_table[oramtree[i].id[1]%(1<<BLOCKNUMLOG)] = temp; 
     }
     printf ("finished initializa p_table \n");
     printf ("Accessing %d blocks \n", ACCESSNUM);
-    /*for (int i = 0; i< (1<<(BLOCKNUMLOG)); i++){
-        bool find = false; 
-        for (int j = 0; j< (TREESIZE-1); j++){
-            int temp = j;
-            while (temp <TREESIZE-1){
-                temp = temp*2 + 1*(temp%2);
-            }
-             temp = (temp-1)/2 + 1 - (1<<LEAFNUMLOG);
-            if(i == oramtree[j].id[0]){
-               oramtree[j].id[0] = 0x8000 | (oramtree[j].id[0]) ; 
-               p_table[i] = temp;
-               find = true;
-               break; 
-            } else if (i == oramtree[j].id[1]){
-               oramtree[j].id[1] = 0x8000 | (oramtree[j].id[1]) ; 
-               p_table[i] = temp;
-               find = true;
-               break;
-            } 
-            
-        }
-        if (!find) {
-            p_table[i] = 0xdead;
-            printf("not able to find %d\n", i);
-        } 
-    }*/
-    for (int i = 0; i<(ACCESSNUM); i++){
-        do {
-        access_script[i] = rand()%(1<<BLOCKNUMLOG);
-        } while(p_table[access_script[i]] == 0xdead); 
-        int bucketindex = (1<<LEAFNUMLOG)-1+p_table[access_script[i]];
-        while (true){
-            if(oramtree[bucketindex].id[0] == (access_script[i] | 0x8000) || oramtree[bucketindex].id[1] == (access_script[i] | 0x8000)){
-               break;
-            }
-            if (bucketindex <= 0) {
-               printf( "fail: cant find blockid in tree: %d\n", access_script[i]); 
-               break;
-            }
-            bucketindex=(bucketindex-1 )/2;   
 
-        }
+    for (int i = 0; i<(1<BLOCKNUMLOG); i++){
+	if (p_table[i] != i/BLOCKPERBUCKET)  printf("p_table is wrong\n");
+
+      printf("finish checking position table\n");
+    }
+   
+    for (int i = 0; i<(ACCESSNUM); i++){
+        access_script[i] = rand()%(1<<BLOCKNUMLOG);
+          if (p_table[access_script[i]] == 0xdead) printf("p_table has hole?\n");
+
+
        // printf("host access : 0x%x\n", p_table[access_script[i]] );
     }
     printf("finish initialing host\n");
@@ -362,7 +344,7 @@ int main(int argc, char** argv)
     	printf("The peek last error is %s", cudaGetErrorString(cudaGetLastError()));
     }
     cudaDeviceSynchronize();
-    
+    CUDA_CALL(cudaMemcpy(doramtree,cudoramtree,(TREESIZE)*sizeof(OramD),cudaMemcpyDeviceToHost));
     cudaError_t err2 = cudaMemcpy(check_table, cucheck_table, (ACCESSNUM*24) * sizeof(uint16_t), cudaMemcpyDeviceToHost);
     if(err2 != cudaSuccess){
      printf("after  checktable copy error is %s\n", cudaGetErrorString(err2));

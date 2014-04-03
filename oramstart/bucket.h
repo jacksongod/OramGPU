@@ -1,14 +1,22 @@
 #include<stdio.h>
 #include<stdint.h>
 
-
 template<int B>
 class TBucket {
 public:
   //uint16_t slotavail;
   uint16_t id[B];
-   
+  void init(int a){
+    for(int i=0; i< B; i++){
+       id[i] = ( 0x8000 |(a++));
+    }
+  }    
   
+  void initzero(void){
+    for(int i=0; i< B; i++){
+       id[i] = 0;
+    }
+  }    
 
 };
 
