@@ -40,7 +40,7 @@ __device__ __forceinline__ int calcindex(int level, uint16_t path){
 
 }
 
-__global__ void oramshare(uint16_t* position_table, uint32_t* access_script,uint16_t* checktable, OramB* oramtree, uint16_t* checktable2,curandState *randstate,OramD* datatree){
+__global__ void oramshare(uint16_t* position_table, uint32_t* access_script,uint16_t* checktable, OramB* oramtree, TDBlock<BLOCKSIZE>* checktable2,curandState *randstate,OramD* datatree){
 	int tid =  threadIdx.x;
         curandState localrandState = randstate[tid];
         __shared__ OramB metatree[TREESIZE];              //4K*sizeof(OramB) = 16KB
@@ -103,20 +103,20 @@ __global__ void oramshare(uint16_t* position_table, uint32_t* access_script,uint
             //    accessid = access_script[i];
 	    //	pathidtemp = localtable[accessid/2] ;
             //    pathid =   0xffff&(pathidtemp  >>((accessid&0x1)<<4)); 
-         int myblockid ;
+  //       int myblockid ;
         if(tid <STASHSIZE)  {
-			streepathlock[tid] = 0;
-			 myblockid = stash[tid] ;
-			if(blockid == myblockid &&stashlock[tid] !=0){
-				blockinstash = 1; 
-				checktable[i] = blockid;
-			} else{
-				blockinstash =0; 
-			}
-		} 
-        __syncthreads();
+			streepathlock[tid] = 0;}
+		//	 myblockid = stash[tid] ;
+		//	if(blockid == myblockid &&stashlock[tid] !=0){
+		//		blockinstash = 1; 
+		//		checktable[i] = blockid;
+		//	} else{
+		//		blockinstash =0; 
+		//	}
+		//} 
+  //      __syncthreads();
 
-		if (!blockinstash) {
+		//if (!blockinstash) {
          if (tid< 24){  //copy entire path to local registers (12 levels, 24 blocks)
                treepathlock[tid] = 0;
                 //pathcount = 24; 
@@ -134,7 +134,7 @@ __global__ void oramshare(uint16_t* position_table, uint32_t* access_script,uint
                     stash[startindex] = id &0xfff; 
                     
                  startindex = (startindex+1)%STASHSIZE; 
-           //         atomicSub(&stashcount,1);
+                    atomicSub(&stashcount,1);
               //       printf("id: %d, data id %d\n",tid,stash[startindex%STASHSIZE]);
               //      checktable[i*24+tid] = stash[startindex] ;
               //      checktable2[i*24+tid] = pathid;
@@ -149,7 +149,7 @@ __global__ void oramshare(uint16_t* position_table, uint32_t* access_script,uint
                      
          }  
          __syncthreads();
-    //     if (tid==0 ) atomicMin(&maxstashcount, stashcount);
+         if (tid==0 ) atomicMin(&maxstashcount, stashcount);
         /* if (tid < STASHSIZE){
              if (stashlock[tid]!=0){
 		   int myblockid = stash[tid];
@@ -192,7 +192,7 @@ __global__ void oramshare(uint16_t* position_table, uint32_t* access_script,uint
               int secondblock = (tid>=STASHSIZE);
               int stid = tid-secondblock*STASHSIZE; 
              if (stashlock[stid]!=0){
-		    myblockid = stash[stid] ;
+		   int myblockid = stash[stid] ;
 		   if(myblockid == blockid ){
                       localtable[myblockid] = newposition;
 					   checktable[i] = blockid;
@@ -213,7 +213,7 @@ __global__ void oramshare(uint16_t* position_table, uint32_t* access_script,uint
                        writebackloc[blockloc] = stid; 
                        metatree[treeindex].id[secondblock] = 0x8000|myblockid;
                        stashlock[stid] = 0;
-                 //      atomicAdd(&stashcount,1);
+                       atomicAdd(&stashcount,1);
                    //    atomicSub(&pathcount,1);
                        break; 
                    } 
@@ -227,13 +227,14 @@ __global__ void oramshare(uint16_t* position_table, uint32_t* access_script,uint
 			 } 
 
 
-         }else if(tid<896) {          //other threads bring in the data from tree to data stash. 
+         }
+		 else if(tid<896) {          //other threads bring in the data from tree to data stash. 
               int stid = tid - STASHSIZE*BLOCKPERBUCKET; 
               int bucketid= stid/16;
              int treeindex = calcindex(bucketid/2, pathid);
               int whichdata = stid%16;
               int whichblock = bucketid%2;
-              datastash[stashaccessloc [bucketid]] = datatree[treeindex].block[whichblock].data[whichdata]; 
+              datastash[stashaccessloc [bucketid]%STASHSIZE*16+whichdata] = datatree[treeindex].block[whichblock].data[whichdata]; 
 
          }  
          __syncthreads();
@@ -244,15 +245,15 @@ __global__ void oramshare(uint16_t* position_table, uint32_t* access_script,uint
              int treeindex = calcindex(bucketid/2, pathid);
               int whichdata = tid%16;
               int whichblock = bucketid%2;
-             datatree[treeindex].block[whichblock].data[whichdata] = datastash[writebackloc[bucketid]];       
+             datatree[treeindex].block[whichblock].data[whichdata] = datastash[stashaccessloc [bucketid]%STASHSIZE*16+whichdata];       
 
          }  
-
+		 __syncthreads();
 		}
 
-    }
+    
 
-  //  if (tid == 0)    printf("max stash size %ud\n",256-maxstashcount);
+    if (tid == 0)    printf("max stash size %ud\n",256-maxstashcount);
 }
 __global__ void setup_kernel(curandState *state)
 {
@@ -275,7 +276,8 @@ int main(int argc, char** argv)
    setup_kernel<<<CUDABLOCKNUM,CUDATHREADNUM>>>(devStates);
     uint16_t* p_table = new uint16_t[1<<BLOCKNUMLOG];
     uint16_t* check_table = new uint16_t[ACCESSNUM];
-    uint16_t* check_table2 = new uint16_t[ACCESSNUM*24];
+    TDBlock<BLOCKSIZE>* check_table2 = new TDBlock<BLOCKSIZE>[ACCESSNUM];
+	TDBlock<BLOCKSIZE>* resultlist = new TDBlock<BLOCKSIZE>[1<<BLOCKNUMLOG];
     uint32_t* access_script = new uint32_t[ACCESSNUM];
     //uint32_t* orampath = new uint32_t[1<<LEAFNUMLOG];
     OramB* oramtree = new OramB[TREESIZE];
@@ -297,7 +299,8 @@ int main(int argc, char** argv)
         oramtree[i].init(temp*BLOCKPERBUCKET); 
         p_table[BLOCKPERBUCKET*temp] = temp;
         p_table[BLOCKPERBUCKET*temp+1] = temp;
-        
+        resultlist[BLOCKPERBUCKET*temp] =doramtree[i].block[0];
+		resultlist[BLOCKPERBUCKET*temp+1] =doramtree[i].block[1];
 
         //oramtree[i].id[0] =( 0x8000 |rand()%(1<<BLOCKNUMLOG)); 
         //p_table[oramtree[i].id[0]%(1<<BLOCKNUMLOG)] = temp; 
@@ -324,7 +327,7 @@ int main(int argc, char** argv)
     printf("orambucket size %d \n",sizeof(OramB));
     uint16_t* cup_table;
     uint16_t* cucheck_table;
-    uint16_t* cucheck_table2;
+    TDBlock<BLOCKSIZE>* cucheck_table2;
     uint32_t* cuaccess_script;
    // uint32_t* cuorampath;
     OramB* cuoramtree;
@@ -337,7 +340,7 @@ int main(int argc, char** argv)
     if(err != cudaSuccess){
      printf("The error is %s", cudaGetErrorString(err));
     }
-    cudaError_t errr = cudaMalloc((void**)&cucheck_table2,sizeof(uint16_t)*(ACCESSNUM*24));
+    cudaError_t errr = cudaMalloc((void**)&cucheck_table2,sizeof(TDBlock<BLOCKSIZE>)*(ACCESSNUM));
     if(errr != cudaSuccess){
      printf("The error2 is %s", cudaGetErrorString(errr));
     }
@@ -361,21 +364,26 @@ int main(int argc, char** argv)
     	printf("The peek last error is %s", cudaGetErrorString(cudaGetLastError()));
     }
     cudaDeviceSynchronize();
-    CUDA_CALL(cudaMemcpy(doramtree,cudoramtree,(TREESIZE)*sizeof(OramD),cudaMemcpyDeviceToHost));
+   // CUDA_CALL(cudaMemcpy(doramtree,cudoramtree,(TREESIZE)*sizeof(OramD),cudaMemcpyDeviceToHost));
     cudaError_t err2 = cudaMemcpy(check_table, cucheck_table, (ACCESSNUM) * sizeof(uint16_t), cudaMemcpyDeviceToHost);
     if(err2 != cudaSuccess){
      printf("after  checktable copy error is %s\n", cudaGetErrorString(err2));
     }
-    cudaError_t err3 = cudaMemcpy(check_table2, cucheck_table2, (ACCESSNUM*24) * sizeof(uint16_t), cudaMemcpyDeviceToHost);
+    cudaError_t err3 = cudaMemcpy(check_table2, cucheck_table2, (ACCESSNUM) * sizeof(TDBlock<BLOCKSIZE>), cudaMemcpyDeviceToHost);
     if(err3 != cudaSuccess){
      printf("after  checktable copy error is %s\n", cudaGetErrorString(err3));
     }
     printf("gpu finished\n");
     bool pass = true; 
+	bool dpass = true; 
     for (int i =0 ; i< ACCESSNUM ; i++){
 		if (check_table[i] != access_script[i]){
-			printf("fail test, access number: %d\n", i);
+		//	printf("fail test, access number: %d\n", i);
 			pass = false; 
+		}
+
+		if( check_table2[i] != resultlist[access_script[i]]){
+			dpass = false;
 		}
       // int bucketindex = (1<<LEAFNUMLOG) - 1 + p_table[access_script[i]]; 
        //printf ("bucket index %d \n", bucketindex);
@@ -405,6 +413,12 @@ int main(int argc, char** argv)
     
     printf("\nfinished \n");
     if (pass) {
+		printf("All meta data correct\n");
+	}else{
+		printf("Some meta data not correct\n");
+	}
+
+	 if (dpass) {
 		printf("All data correct\n");
 	}else{
 		printf("Some data not correct\n");
@@ -425,6 +439,7 @@ int main(int argc, char** argv)
     delete[] check_table2; 
     delete[] oramtree; 
     delete[] doramtree; 
+	delete[] resultlist; 
     cudaDeviceReset();
     return 0;
 }
