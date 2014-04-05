@@ -22,7 +22,7 @@
 
 #define STASHSIZE 256
 
-#define ACCESSNUM 2000
+#define ACCESSNUM 500
 /**
  * Main
  */
@@ -92,7 +92,7 @@ __global__ void oramshare(uint16_t* position_table, uint32_t* access_script,uint
     //uint32_t accessid; 
     //bool r_foundposition=false;
     //bool w_foundposition=false;; 
-    int startindex= tid<<3 ; //tid *8
+    int startindex= tid*8 ; //tid *8
     uint16_t blockid;
 	for (int i = 0 ; i<ACCESSNUM ; i++ ){
                blockid = access_script[i];
@@ -189,7 +189,7 @@ __global__ void oramshare(uint16_t* position_table, uint32_t* access_script,uint
          } */ 
          //if (tid <256)  stashlock[tid] = 0;      
          if (tid < STASHSIZE*BLOCKPERBUCKET){
-              int secondblock = (tid>=STASHSIZE);
+              bool secondblock = (tid>=STASHSIZE);
               int stid = tid-secondblock*STASHSIZE; 
              if (stashlock[stid]!=0){
 		   int myblockid = stash[stid] ;
@@ -219,7 +219,7 @@ __global__ void oramshare(uint16_t* position_table, uint32_t* access_script,uint
                    } 
                    level--; 
                    if (level<0) break;   
-                   treeindex = (treeindex-1)>>1;
+                   treeindex = (treeindex-1)/2;
                     
                    
                 }		       
@@ -382,9 +382,9 @@ int main(int argc, char** argv)
 			pass = false; 
 		}
 
-		if( check_table2[i] != resultlist[access_script[i]]){
-			dpass = false;
-		}
+	//	if( check_table2[i] != resultlist[access_script[i]]){
+	//		dpass = false;
+	//	}
       // int bucketindex = (1<<LEAFNUMLOG) - 1 + p_table[access_script[i]]; 
        //printf ("bucket index %d \n", bucketindex);
        /*for(int j = 11 ; j >= 0; j--) {
