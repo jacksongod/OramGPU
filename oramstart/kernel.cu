@@ -22,7 +22,7 @@
 
 #define STASHSIZE 256
 
-#define ACCESSNUM 500
+#define ACCESSNUM 50000
 /**
  * Main
  */
@@ -150,30 +150,37 @@ __global__ void oramshare(uint16_t* position_table, uint32_t* access_script,uint
          }  
          __syncthreads();
          if (tid==0 ) atomicMin(&maxstashcount, stashcount);
-        /* if (tid < STASHSIZE){
+
+		 if (i ==1500 ){
+			 int myball = 100;
+		 }
+		
+         if (tid < STASHSIZE){
              if (stashlock[tid]!=0){
 		   int myblockid = stash[tid];
 		   if(myblockid == blockid ){
                       localtable[myblockid] = newposition;
-                      stashaccessloc = tid;
+                      checktable[i] = blockid;
 		   }
                       
                    int sortkey = localtable[myblockid] ^ pathid;  
                    int level = __clz((sortkey<<21)|0x00100000); 
                    int treeindex = calcindex(level,pathid);
                 while(true){
-                   if (pathcount<=0) break; 
+				   int blockloc = (level<<1);
                    if(!atomicCAS(&treepathlock[level<<1],0,1)){
-                       metatree[treeindex].id[0] = myblockid;
+                       writebackloc[blockloc] = tid; 
+                       metatree[treeindex].id[0] = 0x8000|myblockid;
                        stashlock[tid] = 0;
                        atomicAdd(&stashcount,1);
-                       atomicSub(&pathcount,1);
+                    //   atomicSub(&pathcount,1);
                        break; 
                    } else if (!atomicCAS(&treepathlock[(level<<1)+1],0,1)){
-                       metatree[treeindex].id[1] = myblockid;
+                       writebackloc[blockloc+1] = tid; 
+                       metatree[treeindex].id[1] = 0x8000|myblockid;
                        stashlock[tid] = 0;
                        atomicAdd(&stashcount,1);
-                       atomicSub(&pathcount,1);
+                     //  atomicSub(&pathcount,1);
                        break;
                    } 
                    level--; 
@@ -186,9 +193,9 @@ __global__ void oramshare(uint16_t* position_table, uint32_t* access_script,uint
              }
 
 
-         } */ 
+         } 
          //if (tid <256)  stashlock[tid] = 0;      
-         if (tid < STASHSIZE*BLOCKPERBUCKET){
+      /*   if (tid < STASHSIZE*BLOCKPERBUCKET){
               bool secondblock = (tid>=STASHSIZE);
               int stid = tid-secondblock*STASHSIZE; 
              if (stashlock[stid]!=0){
@@ -227,8 +234,8 @@ __global__ void oramshare(uint16_t* position_table, uint32_t* access_script,uint
 			 } 
 
 
-         }
-		 else if(tid<896) {          //other threads bring in the data from tree to data stash. 
+         }*/
+		 else if(tid<896&&tid>511) {          //other threads bring in the data from tree to data stash. 
               int stid = tid - STASHSIZE*BLOCKPERBUCKET; 
               int bucketid= stid/16;
              int treeindex = calcindex(bucketid/2, pathid);
