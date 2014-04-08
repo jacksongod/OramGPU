@@ -22,7 +22,7 @@
 
 #define STASHSIZE 256
 
-#define ACCESSNUM 200
+#define ACCESSNUM 10000
 /**
  * Main
  */
@@ -58,6 +58,7 @@ __global__ void oramshare(uint16_t* position_table, uint32_t* access_script,uint
         __shared__ uint32_t stashaccessloc[(LEAFNUMLOG+1)*BLOCKPERBUCKET];
         __shared__ uint32_t writebackloc[(LEAFNUMLOG+1)*BLOCKPERBUCKET];
         __shared__ uint32_t  datastash[STASHSIZE*(BLOCKSIZE/4)];       
+		//__shared__ TDBlock<BLOCKSIZE> garbage_collector; 
 		//__shared__ uint32_t blockinstash;  
        
     //copy position table from global memory to shared memory
@@ -142,15 +143,20 @@ __global__ void oramshare(uint16_t* position_table, uint32_t* access_script,uint
                     break; 
                  }
                  startindex = (startindex+1)%STASHSIZE; 
-              }
+			  }
             //   printf("out\n");
+		   }else{
+			   stashaccessloc[tid] = 999;
 		   }
 		   
                      
          }  
          __syncthreads();
          if (tid==0 ) atomicMin(&maxstashcount, stashcount);
+		 if(i==80){
 
+			 int myball = 1000;
+		 }
 		
          if (tid < STASHSIZE){
              if (stashlock[tid]!=0){
@@ -240,7 +246,12 @@ __global__ void oramshare(uint16_t* position_table, uint32_t* access_script,uint
              int treeindex = calcindex(bucketid/2, pathid);
               int whichdata = stid%16;
               int whichblock = bucketid%2;
+			  volatile int gabarge;
+			    if(stashaccessloc[bucketid] !=999){           //999 means this block in the tree path is empty
               datastash[(stashaccessloc[bucketid]%STASHSIZE)*16+whichdata] = datatree[treeindex].block[whichblock].data[whichdata]; 
+				}else{                             // if block in the tree path is empty , read the block still, but write to a garbage(don't care) position 
+					gabarge =  datatree[treeindex].block[whichblock].data[whichdata];
+				}
 
          }  
          __syncthreads();
@@ -251,6 +262,7 @@ __global__ void oramshare(uint16_t* position_table, uint32_t* access_script,uint
              int treeindex = calcindex(bucketid/2, pathid);
               int whichdata = tid%16;
               int whichblock = bucketid%2;
+			
              datatree[treeindex].block[whichblock].data[whichdata] = datastash[(writebackloc[bucketid]%STASHSIZE)*16+whichdata];       
              //if (writebackloc[bucketid] >=STASHSIZE){
              //   printf("invalllllllll\n %d access, %d thread", i,tid );
