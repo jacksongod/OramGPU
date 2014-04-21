@@ -1,9 +1,25 @@
 THIS is ORAM GPU project
 
 The project maps Oblivious RAM algorithm to GPGPU programming.
-oramstart is the initial verision.
 
-USE make to build binary , the program  needs nvcc to compile.
+oramstart is the initial verision: 
+1. Oram Block size: 64 Bytes. Number of Blocks: 2^12 = 4K. Total oram size: 4K*64Byte = 256KB
+2. ORAM tree: 12 level complete tree. Leaf level has 2^11 = 2K nodes. Each nodes has 2 blocks. Total capacity of tree: (4K-1)*2*64 Bytes =  ~512KB.  
+3. On-chip stash with capacity of 256 oram blocks.   256*64B = 16KB 
+4. On-chip meta stash/meta tree (data structure which contains oram block ID).
+   size of meta stash = 256* 2B = 512 Byte.
+   size of meta tree = (4K-1) *2 * 2B = 16 KB   (could be moved off chip)
+5. without encryption/decryption so far. 
+6. Only 1 SM is untilized. 
+
+Todo:
+Add encryption/decryption.
+Profile/optimizing design. Goal: get 10x speed up.
+Profile with full SMs running. Optimize if necessary. 
+Moving stash off-chip which Allows larger oram size. 
+
+
+USE make to build binary ,needs nvcc to compile.
 
 if in tacc stampede machine, do "module load cuda", "make " the program, run "sbatch jobscrp" to send executable to the compute node
 use "watch showq -u" to track the status of the job.
