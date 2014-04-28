@@ -9,10 +9,7 @@ printf("Error at %s:%d\n",__FILE__,__LINE__); \
 return EXIT_FAILURE;}} while(0)
 
 
-__device__ void aes_fround (int idx, int whichword,int laneid, int& outword, int& inword,uint32_t RK){
-	int secondposition = (whichword+1)%4-whichword+laneid;
-	int thirdposition = (whichword+2)%4-whichword+laneid; 
-	int fourthposition = (whichword+3)%4-whichword+laneid;
+__device__ void aes_fround (int secondposition, int thirdposition,int fourthposition, int& outword, int& inword,uint32_t RK){
 	int ysecond = __shfl(inword, secondposition);
 	int ythird = __shfl(inword,thirdposition);
 	int yfourth = __shfl(inword, fourthposition);
@@ -24,10 +21,7 @@ __device__ void aes_fround (int idx, int whichword,int laneid, int& outword, int
 
 
 }
-__device__ void aes_finalfround (int idx, int whichword,int laneid, int& outword, int& inword,uint32_t RK){
-	int secondposition = (whichword+1)%4-whichword+laneid;
-	int thirdposition = (whichword+2)%4-whichword+laneid; 
-	int fourthposition = (whichword+3)%4-whichword+laneid;
+__device__ void aes_finalfround (int secondposition, int thirdposition,int fourthposition, int& outword, int& inword,uint32_t RK){
 	int ysecond = __shfl(inword, secondposition);
 	int ythird = __shfl(inword,thirdposition);
 	int yfourth = __shfl(inword, fourthposition);
@@ -67,17 +61,20 @@ __global__ void aeskernel(aes_context *ctx,
      //   if (idx == 0)  printf("xword is 0x%x , whichword is %d\n" , xword,whichword); 
 	xword ^= *(RK_ptr+whichword);
 	RK_ptr += 4; 
+	int secondposition = (whichword+1)%4-whichword+laneid;
+	int thirdposition = (whichword+2)%4-whichword+laneid; 
+	int fourthposition = (whichword+3)%4-whichword+laneid;
 	for( int i = (ctx->nr >> 1) - 1; i > 0; i-- )
         {
-            aes_fround( idx, whichword, laneid, yword, xword,*(RK_ptr+whichword));
+            aes_fround( secondposition,thirdposition,fourthposition, yword, xword,*(RK_ptr+whichword));
 			RK_ptr += 4; 
-            aes_fround( idx, whichword, laneid, xword, yword,*(RK_ptr+whichword));
+            aes_fround( secondposition,thirdposition,fourthposition, xword, yword,*(RK_ptr+whichword));
 			RK_ptr += 4; 
         }
+            aes_fround( secondposition,thirdposition,fourthposition, yword, xword,*(RK_ptr+whichword));
 
-        aes_fround( idx, whichword, laneid, yword, xword,*(RK_ptr+whichword) );
 		RK_ptr += 4; 
-		aes_finalfround ( idx, whichword, laneid, xword, yword,*(RK_ptr+whichword) );
+            aes_finalfround( secondposition,thirdposition,fourthposition, xword, yword,*(RK_ptr+whichword));
 
 //		PUT_UINT32_LE( xword, &stream_block[whichoramblock][whichcipherblock*16+whichword*4],  whichword*4);
 		*((uint32_t*)&inout[whichoramblock*pitch_io+whichcipherblock*16+whichword*4]) = 
