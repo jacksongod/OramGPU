@@ -3,6 +3,7 @@
 #include "device_launch_parameters.h"
 #include "aesctr.h"
 #include <cstring>
+#include <iostream>
 #define CUDA_CALL(x) do { if((x) != cudaSuccess) { \
 printf("Error at %s:%d\n",__FILE__,__LINE__); \
 return EXIT_FAILURE;}} while(0)
@@ -17,10 +18,10 @@ __device__ void aes_fround (int idx, int whichword,int laneid, int& outword, int
 	int ythird = __shfl(inword,thirdposition);
 	int yfourth = __shfl(inword, fourthposition);
 
-	outword = RK^FT0[ ( inword   ) & 0xFF ] ^ 
-		         FT1[ ( ysecond >>  8 ) & 0xFF ] ^
-                 FT2[ ( ythird >> 16 ) & 0xFF ] ^   
-                 FT3[ ( yfourth >> 24 ) & 0xFF ];    
+	outword = RK^DFT0[ ( inword   ) & 0xFF ] ^ 
+		         DFT1[ ( ysecond >>  8 ) & 0xFF ] ^
+                 DFT2[ ( ythird >> 16 ) & 0xFF ] ^   
+                 DFT3[ ( yfourth >> 24 ) & 0xFF ];    
 
 
 }
@@ -32,10 +33,10 @@ __device__ void aes_finalfround (int idx, int whichword,int laneid, int& outword
 	int ythird = __shfl(inword,thirdposition);
 	int yfourth = __shfl(inword, fourthposition);
 
-	outword =RK ^ ( (uint32_t) FSb[ ( inword       ) & 0xFF ]       ) ^
-                ( (uint32_t) FSb[ ( ysecond >>  8 ) & 0xFF ] <<  8 ) ^
-                ( (uint32_t) FSb[ ( ythird >> 16 ) & 0xFF ] << 16 ) ^
-                ( (uint32_t) FSb[ ( yfourth >> 24 ) & 0xFF ] << 24 );  
+	outword =RK ^ ( (uint32_t) DFSb[ ( inword       ) & 0xFF ]       ) ^
+                ( (uint32_t) DFSb[ ( ysecond >>  8 ) & 0xFF ] <<  8 ) ^
+                ( (uint32_t) DFSb[ ( ythird >> 16 ) & 0xFF ] << 16 ) ^
+                ( (uint32_t) DFSb[ ( yfourth >> 24 ) & 0xFF ] << 24 );  
 
                 
 
@@ -46,10 +47,12 @@ __global__ void aeskernel(aes_context *ctx,
                      //  size_t *nc_off,
                     //   unsigned char nonce_counter[16],
                     //   unsigned char stream_block[16],
-                       const unsigned char **nonce_counter,
-                       unsigned char **stream_block,
-					   unsigned char **input,
-					   unsigned char **output
+                       const unsigned char *nonce_counter,
+                      // unsigned char **stream_block,
+					  // unsigned char **input,
+					   unsigned char *inout,
+					   size_t pitch_nc,
+					   size_t pitch_io
 					   )
 {
     int idx = threadIdx.x;
@@ -60,7 +63,7 @@ __global__ void aeskernel(aes_context *ctx,
 	int whichword = idx%4;
     uint32_t* RK_ptr = ctx->rk;
 
-	GET_UINT32_LE( xword, &nonce_counter[whichoramblock][whichcipherblock*16+whichword*4],  whichword*4 ); 
+	GET_UINT32_LE( xword, &nonce_counter[whichoramblock*pitch_nc+whichcipherblock*16+whichword*4],  whichword*4 ); 
 	xword ^= *(RK_ptr+whichword);
 	RK_ptr += 4; 
 	for( int i = (ctx->nr >> 1) - 1; i > 0; i-- )
@@ -75,52 +78,75 @@ __global__ void aeskernel(aes_context *ctx,
 		RK_ptr += 4; 
 		aes_finalfround ( idx, whichword, laneid, xword, yword,*(RK_ptr+whichword) );
 
-		PUT_UINT32_LE( xword, &stream_block[whichoramblock][whichcipherblock*16+whichword*4],  whichword*4);
-		*((uint32_t*)&output[whichoramblock][whichcipherblock*16+whichword*4]) = 
-			*((uint32_t*)&input[whichoramblock][whichcipherblock*16+whichword*4])^
-			*((uint32_t*)&stream_block[whichoramblock][whichcipherblock*16+whichword*4]);
+//		PUT_UINT32_LE( xword, &stream_block[whichoramblock][whichcipherblock*16+whichword*4],  whichword*4);
+		*((uint32_t*)&inout[whichoramblock*pitch_io+whichcipherblock*16+whichword*4]) = 
+			*((uint32_t*)&inout[whichoramblock*pitch_io+whichcipherblock*16+whichword*4])^
+			xword; 
+			//*((uint32_t*)&stream_block[whichoramblock][whichcipherblock*16+whichword*4]);
 
 }
 
 int main()
 {
-     int i, j, u, v;
+    // int i, j, u, v;
     unsigned char key[16];
-    unsigned char buf[64];
+    
     unsigned char iv[16];
+
 
     size_t offset;
 
     int len;
-    unsigned char nonce_counter[16];
-    unsigned char stream_block[16];
+	int height = 24;     //num of oram blocks; 
+	int width = 64;      //num of bytes in one oram block
+    unsigned char* nonce_counter = new unsigned char[height*width];
+  //  unsigned char* stream_block= new unsigned char[height*width];
+	unsigned char* buf= new unsigned char[height*width];
     aes_context ctx;
+	 len = 16;
+	for ( int i = 0; i< height; i++){
 
-	memcpy( nonce_counter, aes_test_ctr_nonce_counter[0], 16 );
+		for (int j = 0; j<width/16; j++){
+			memcpy( &nonce_counter[64*i+j*16], aes_test_ctr_nonce_counter[0], 16 );
+			memcpy( &buf[64*i+j*16], aes_test_ctr_ct[0], len );
+		}
+	}
     memcpy( key, aes_test_ctr_key[0], 16 );
 	 offset = 0;
-
-	 
      aes_context::aes_setkey_enc( &ctx, key);
-	 len = aes_test_ctr_len[0];
-     memcpy( buf, aes_test_ctr_ct[0], len );
+
+	size_t pitch_nc, pitch_buf,pitch_sb;
+	unsigned char* dnonce_counter; 
+	unsigned char* dbuf ; 
+	aes_context* dctx;
+
+	//allocate device memory 
+	//unsigned char* stream_block;
+	CUDA_CALL(cudaMalloc(&dctx, sizeof(aes_context)));
+	CUDA_CALL(cudaMallocPitch(&dnonce_counter,&pitch_nc, width, height));
+	CUDA_CALL(cudaMallocPitch(&dbuf, &pitch_buf, width, height));
+
+	//copy data to device memory 
+	CUDA_CALL(cudaMemcpy2D(dnonce_counter,pitch_nc,buf,width,width,height,cudaMemcpyHostToDevice));
+	CUDA_CALL(cudaMemcpy2D(dbuf,pitch_buf,buf,width,width,height,cudaMemcpyHostToDevice));
+	CUDA_CALL(cudaMemcpy(dctx,&ctx,sizeof(aes_context),cudaMemcpyHostToDevice));
+   // cudaMallocPitch(&stream_block, &pitch_sb, sizeof(float)*width, height);
+
+	//copy constant data to device memory 
+	 cudaMemcpyToSymbol    (  DFT0,  FT0,   sizeof(uint32_t)*256  );
+	 cudaMemcpyToSymbol    (  DFT1,  FT1,   sizeof(uint32_t)*256  );
+	 cudaMemcpyToSymbol    (  DFT2,  FT2,   sizeof(uint32_t)*256  );
+	 cudaMemcpyToSymbol    (  DFT3,  FT3,   sizeof(uint32_t)*256  );
+	 cudaMemcpyToSymbol    (  DFSb,  FSb,   sizeof(char)*256  );
+	aeskernel<<<1,height*width>>>(dctx,dnonce_counter,dbuf,pitch_nc,pitch_buf);
+    CUDA_CALL(cudaMemcpy2D(buf,width,dbuf,pitch_buf,width,height,cudaMemcpyDeviceToHost));
     // Add vectors in parallel.
-    cudaError_t cudaStatus = addWithCuda(c, a, b, arraySize);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "addWithCuda failed!");
-        return 1;
-    }
+	
+ 
+    CUDA_CALL( cudaDeviceReset());
 
-    printf("{1,2,3,4,5} + {10,20,30,40,50} = {%d,%d,%d,%d,%d}\n",
-        c[0], c[1], c[2], c[3], c[4]);
-
-    // cudaDeviceReset must be called before exiting in order for profiling and
-    // tracing tools such as Nsight and Visual Profiler to show complete traces.
-    cudaStatus = cudaDeviceReset();
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaDeviceReset failed!");
-        return 1;
-    }
-
+	delete[] buf; 
+	delete[] nonce_counter;
+	
     return 0;
 }

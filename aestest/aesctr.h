@@ -101,18 +101,21 @@ static const uint32_t RCON[10] =
 #define V(a,b,c,d) 0x##a##b##c##d
 static const uint32_t FT0[256] = { FT };
 #undef V
-
+__constant__ uint32_t DFT0[256]; 
 #define V(a,b,c,d) 0x##b##c##d##a
 static const uint32_t FT1[256] = { FT };
 #undef V
+__constant__ uint32_t DFT1[256]; 
 
 #define V(a,b,c,d) 0x##c##d##a##b
 static const uint32_t FT2[256] = { FT };
 #undef V
+__constant__ uint32_t DFT2[256]; 
 
 #define V(a,b,c,d) 0x##d##a##b##c
 static const uint32_t FT3[256] = { FT };
 #undef V
+__constant__ uint32_t DFT3[256]; 
 
 #undef FT
 
@@ -152,6 +155,8 @@ static const unsigned char FSb[256] =
     0x8C, 0xA1, 0x89, 0x0D, 0xBF, 0xE6, 0x42, 0x68,
     0x41, 0x99, 0x2D, 0x0F, 0xB0, 0x54, 0xBB, 0x16
 };
+
+__constant__ unsigned char DFSb[256]; 
 
 //test vector
 static const unsigned char aes_test_ctr_key[3][16] =
