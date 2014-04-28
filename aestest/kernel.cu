@@ -7,7 +7,6 @@
 #define CUDA_CALL(x) do { if((x) != cudaSuccess) { \
 printf("Error at %s:%d\n",__FILE__,__LINE__); \
 return EXIT_FAILURE;}} while(0)
-cudaError_t addWithCuda(int *c, const int *a, const int *b, unsigned int size);
 
 
 __device__ void aes_fround (int idx, int whichword,int laneid, int& outword, int& inword,uint32_t RK){
@@ -56,14 +55,16 @@ __global__ void aeskernel(aes_context *ctx,
 					   )
 {
     int idx = threadIdx.x;
-	int xword, yword; 
+	int  xword, yword; 
 	int whichoramblock = idx/16; 
 	int whichcipherblock = idx/4%4; 
 	int laneid = idx%32;
 	int whichword = idx%4;
-    uint32_t* RK_ptr = ctx->rk;
+    uint32_t* RK_ptr = ctx->buf;
 
-	GET_UINT32_LE( xword, &nonce_counter[whichoramblock*pitch_nc+whichcipherblock*16+whichword*4],  whichword*4 ); 
+	//GET_UINT32_LE( xword, &nonce_counter[whichoramblock*pitch_nc+whichcipherblock*16+whichword*4],  whichword*4 ); 
+        xword =  *((int*)  &nonce_counter[whichoramblock*pitch_nc+whichcipherblock*16+whichword*4]  );
+     //   if (idx == 0)  printf("xword is 0x%x , whichword is %d\n" , xword,whichword); 
 	xword ^= *(RK_ptr+whichword);
 	RK_ptr += 4; 
 	for( int i = (ctx->nr >> 1) - 1; i > 0; i-- )
@@ -105,10 +106,9 @@ int main()
     aes_context ctx;
 	 len = 16;
 	for ( int i = 0; i< height; i++){
-
 		for (int j = 0; j<width/16; j++){
 			memcpy( &nonce_counter[64*i+j*16], aes_test_ctr_nonce_counter[0], 16 );
-			memcpy( &buf[64*i+j*16], aes_test_ctr_ct[0], len );
+			memcpy( &buf[64*i+j*16], aes_test_ctr_pt[0], len );
 		}
 	}
     memcpy( key, aes_test_ctr_key[0], 16 );
@@ -125,28 +125,88 @@ int main()
 	CUDA_CALL(cudaMalloc(&dctx, sizeof(aes_context)));
 	CUDA_CALL(cudaMallocPitch(&dnonce_counter,&pitch_nc, width, height));
 	CUDA_CALL(cudaMallocPitch(&dbuf, &pitch_buf, width, height));
-
+        
+        std::cout << "nc pitch " << pitch_nc << " "; 
+        std::cout << "buf pitch " << pitch_buf << std::endl; 
+        std::cout << "rk is " << std::hex<< (long)(ctx.rk)<<std::endl;
+        std::cout << "rk real is " << std::hex<< (long)(ctx.buf)<<std::endl;
 	//copy data to device memory 
-	CUDA_CALL(cudaMemcpy2D(dnonce_counter,pitch_nc,buf,width,width,height,cudaMemcpyHostToDevice));
+	CUDA_CALL(cudaMemcpy2D(dnonce_counter,pitch_nc,nonce_counter,width,width,height,cudaMemcpyHostToDevice));
 	CUDA_CALL(cudaMemcpy2D(dbuf,pitch_buf,buf,width,width,height,cudaMemcpyHostToDevice));
 	CUDA_CALL(cudaMemcpy(dctx,&ctx,sizeof(aes_context),cudaMemcpyHostToDevice));
    // cudaMallocPitch(&stream_block, &pitch_sb, sizeof(float)*width, height);
 
 	//copy constant data to device memory 
-	 cudaMemcpyToSymbol    (  DFT0,  FT0,   sizeof(uint32_t)*256  );
-	 cudaMemcpyToSymbol    (  DFT1,  FT1,   sizeof(uint32_t)*256  );
-	 cudaMemcpyToSymbol    (  DFT2,  FT2,   sizeof(uint32_t)*256  );
-	 cudaMemcpyToSymbol    (  DFT3,  FT3,   sizeof(uint32_t)*256  );
-	 cudaMemcpyToSymbol    (  DFSb,  FSb,   sizeof(char)*256  );
-	aeskernel<<<1,height*width>>>(dctx,dnonce_counter,dbuf,pitch_nc,pitch_buf);
+	 CUDA_CALL(cudaMemcpyToSymbol    (  DFT0,  FT0,   sizeof(uint32_t)*256  ));
+	 CUDA_CALL(cudaMemcpyToSymbol    (  DFT1,  FT1,   sizeof(uint32_t)*256  ));
+	 CUDA_CALL(cudaMemcpyToSymbol    (  DFT2,  FT2,   sizeof(uint32_t)*256  ));
+	 CUDA_CALL(cudaMemcpyToSymbol    (  DFT3,  FT3,   sizeof(uint32_t)*256  ));
+	 CUDA_CALL(cudaMemcpyToSymbol    (  DFSb,  FSb,   sizeof(char)*256  ));
+	aeskernel<<<1,height*width/4>>>(dctx,dnonce_counter,dbuf,pitch_nc,pitch_buf);
+         cudaDeviceSynchronize();
     CUDA_CALL(cudaMemcpy2D(buf,width,dbuf,pitch_buf,width,height,cudaMemcpyDeviceToHost));
-    // Add vectors in parallel.
-	
+//	aeskernel<<<1,height*width/4>>>(dctx,dnonce_counter,dbuf,pitch_nc,pitch_buf);
+//    CUDA_CALL(cudaMemcpy2D(buf,width,dbuf,pitch_buf,width,height,cudaMemcpyDeviceToHost));
+     std::cout<< "GPU AESCTR encryption done"<< std::endl; 
+       bool encright=true ; 
+	for ( int i = 0; i< height; i++){
+		for (int j = 0; j<width/16; j++){
+   			if( memcmp( &buf[width*i+j*16], aes_test_ctr_ct[0], len ) != 0 ){
+                           encright = false; 
+                           std::cout << "ORAMblock "<<i << "cipher " << j << "is incorrect" <<std::endl;	
+                           std::cout << "expect 0x";
+                           for (int k = 0 ; k<16;k++){
+                                std::cout << std::hex<< static_cast<int>(aes_test_ctr_ct[0][k]);                              
+                           }
+                           std::cout<<std::endl; 
+                           std::cout<< "actual 0x" ;
+                           for (int k = 0 ; k<16;k++){
+                                std::cout << std::hex<< static_cast<int>(buf[width*i+j*16+k]);                              
+                           }
+                           std::cout<<std::endl; 
+			 }	
+		}
+	}
+        if (encright) {
+             std::cout<< "encryption test passed"<< std::endl; 
+        } else {
+             std::cout<< "encryption test failed"<< std::endl; 
+        }   
+	aeskernel<<<1,height*width/4>>>(dctx,dnonce_counter,dbuf,pitch_nc,pitch_buf);
+         cudaDeviceSynchronize();
+    CUDA_CALL(cudaMemcpy2D(buf,width,dbuf,pitch_buf,width,height,cudaMemcpyDeviceToHost));
+     std::cout<< "GPU AESCTR decryption done"<< std::endl; 
+       bool decright=true ; 
+	for ( int i = 0; i< height; i++){
+		for (int j = 0; j<width/16; j++){
+   			if( memcmp( &buf[width*i+j*16], aes_test_ctr_pt[0], len ) != 0 ){
+                           decright = false; 
+                           std::cout << "ORAMblock "<<i << "cipher " << j << "is incorrect" <<std::endl;	
+                           std::cout << "expect 0x";
+                           for (int k = 0 ; k<16;k++){
+                                std::cout << std::hex<< static_cast<int>(aes_test_ctr_pt[0][k]);                              
+                           }
+                           std::cout<<std::endl; 
+                           std::cout<< "actual 0x" ;
+                           for (int k = 0 ; k<16;k++){
+                                std::cout << std::hex<< static_cast<int>(buf[width*i+j*16+k]);                              
+                           }
+                           std::cout<<std::endl; 
+			 }	
+		}
+	}
+        if (decright) {
+             std::cout<< "decryption test passed"<< std::endl; 
+        } else {
+             std::cout<< "decryption test failed"<< std::endl; 
+        }   
  
-    CUDA_CALL( cudaDeviceReset());
-
+       std::cout<< "test done" << std::endl; 
 	delete[] buf; 
 	delete[] nonce_counter;
-	
+        cudaFree (dbuf)	;
+        cudaFree(dnonce_counter);
+        cudaFree(dctx);
+    CUDA_CALL( cudaDeviceReset());
     return 0;
 }

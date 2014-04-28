@@ -2,7 +2,7 @@
 
 
 #include <stdio.h>
-#include <cstdint>
+#include <stdint.h>
 #define PTSIZE 64
 #define PTSIZEINWORD PTSIZE/4
 
