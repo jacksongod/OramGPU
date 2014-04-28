@@ -9,43 +9,49 @@ printf("Error at %s:%d\n",__FILE__,__LINE__); \
 return EXIT_FAILURE;}} while(0)
 
 
-__device__ void aes_fround (int secondposition, int thirdposition,int fourthposition, int& outword, int& inword,uint32_t RK){
+__device__ void aes_fround (int secondposition, int thirdposition,int fourthposition, int& outword, int& inword,uint32_t RK,
+                                    const uint32_t* __restrict__ RDFT0,
+                                    const uint32_t* __restrict__ RDFT1,
+                                    const uint32_t* __restrict__ RDFT2,
+                                    const uint32_t* __restrict__ RDFT3
+                                                                                      ){
 	int ysecond = __shfl(inword, secondposition);
 	int ythird = __shfl(inword,thirdposition);
 	int yfourth = __shfl(inword, fourthposition);
 
-	outword = RK^DFT0[ ( inword   ) & 0xFF ] ^ 
-		         DFT1[ ( ysecond >>  8 ) & 0xFF ] ^
-                 DFT2[ ( ythird >> 16 ) & 0xFF ] ^   
-                 DFT3[ ( yfourth >> 24 ) & 0xFF ];    
+	outword = RK^RDFT0[ ( inword   ) & 0xFF ] ^ 
+		         RDFT1[ ( ysecond >>  8 ) & 0xFF ] ^
+                 RDFT2[ ( ythird >> 16 ) & 0xFF ] ^   
+                 RDFT3[ ( yfourth >> 24 ) & 0xFF ];    
 
 
 }
-__device__ void aes_finalfround (int secondposition, int thirdposition,int fourthposition, int& outword, int& inword,uint32_t RK){
+__device__ void aes_finalfround (int secondposition, int thirdposition,int fourthposition, int& outword, int& inword,uint32_t RK,
+                                    const unsigned char* __restrict__ RDFSb
+                                                                                       ){
 	int ysecond = __shfl(inword, secondposition);
 	int ythird = __shfl(inword,thirdposition);
 	int yfourth = __shfl(inword, fourthposition);
 
-	outword =RK ^ ( (uint32_t) DFSb[ ( inword       ) & 0xFF ]       ) ^
-                ( (uint32_t) DFSb[ ( ysecond >>  8 ) & 0xFF ] <<  8 ) ^
-                ( (uint32_t) DFSb[ ( ythird >> 16 ) & 0xFF ] << 16 ) ^
-                ( (uint32_t) DFSb[ ( yfourth >> 24 ) & 0xFF ] << 24 );  
+	outword =RK ^ ( (uint32_t) RDFSb[ ( inword       ) & 0xFF ]       ) ^
+                ( (uint32_t) RDFSb[ ( ysecond >>  8 ) & 0xFF ] <<  8 ) ^
+                ( (uint32_t) RDFSb[ ( ythird >> 16 ) & 0xFF ] << 16 ) ^
+                ( (uint32_t) RDFSb[ ( yfourth >> 24 ) & 0xFF ] << 24 );  
 
                 
 
 }
 
 __global__ void aeskernel(aes_context *ctx,
-                     //  size_t length,
-                     //  size_t *nc_off,
-                    //   unsigned char nonce_counter[16],
-                    //   unsigned char stream_block[16],
                        const unsigned char *nonce_counter,
-                      // unsigned char **stream_block,
-					  // unsigned char **input,
 					   unsigned char *inout,
 					   size_t pitch_nc,
-					   size_t pitch_io
+					   size_t pitch_io,
+                                    const uint32_t* __restrict__ RDFT0,
+                                    const uint32_t* __restrict__ RDFT1,
+                                    const uint32_t* __restrict__ RDFT2,
+                                    const uint32_t* __restrict__ RDFT3,
+                                    const unsigned char* __restrict__ RDFSb
 					   )
 {
     int idx = threadIdx.x;
@@ -66,15 +72,15 @@ __global__ void aeskernel(aes_context *ctx,
 	int fourthposition = (whichword+3)%4-whichword+laneid;
 	for( int i = (ctx->nr >> 1) - 1; i > 0; i-- )
         {
-            aes_fround( secondposition,thirdposition,fourthposition, yword, xword,*(RK_ptr+whichword));
+            aes_fround( secondposition,thirdposition,fourthposition, yword, xword,*(RK_ptr+whichword), RDFT0,RDFT1,RDFT2,RDFT3);
 			RK_ptr += 4; 
-            aes_fround( secondposition,thirdposition,fourthposition, xword, yword,*(RK_ptr+whichword));
+            aes_fround( secondposition,thirdposition,fourthposition, xword, yword,*(RK_ptr+whichword), RDFT0,RDFT1,RDFT2,RDFT3);
 			RK_ptr += 4; 
         }
-            aes_fround( secondposition,thirdposition,fourthposition, yword, xword,*(RK_ptr+whichword));
+            aes_fround( secondposition,thirdposition,fourthposition, yword, xword,*(RK_ptr+whichword), RDFT0,RDFT1,RDFT2,RDFT3);
 
 		RK_ptr += 4; 
-            aes_finalfround( secondposition,thirdposition,fourthposition, xword, yword,*(RK_ptr+whichword));
+            aes_finalfround( secondposition,thirdposition,fourthposition, xword, yword,*(RK_ptr+whichword),RDFSb);
 
 //		PUT_UINT32_LE( xword, &stream_block[whichoramblock][whichcipherblock*16+whichword*4],  whichword*4);
 		*((uint32_t*)&inout[whichoramblock*pitch_io+whichcipherblock*16+whichword*4]) = 
@@ -117,6 +123,17 @@ int main()
 	unsigned char* dbuf ; 
 	aes_context* dctx;
 
+        uint32_t* RDFT0;
+        uint32_t* RDFT1;
+        uint32_t* RDFT2;
+        uint32_t* RDFT3;
+        unsigned char* RDFSb ; 
+	CUDA_CALL(cudaMalloc(&RDFT0, sizeof(uint32_t)*256));
+	CUDA_CALL(cudaMalloc(&RDFT1, sizeof(uint32_t)*256));
+	CUDA_CALL(cudaMalloc(&RDFT2, sizeof(uint32_t)*256));
+	CUDA_CALL(cudaMalloc(&RDFT3, sizeof(uint32_t)*256));
+	CUDA_CALL(cudaMalloc(&RDFSb, sizeof(char)*256));
+
 	//allocate device memory 
 	//unsigned char* stream_block;
 	CUDA_CALL(cudaMalloc(&dctx, sizeof(aes_context)));
@@ -134,12 +151,19 @@ int main()
    // cudaMallocPitch(&stream_block, &pitch_sb, sizeof(float)*width, height);
 
 	//copy constant data to device memory 
-	 CUDA_CALL(cudaMemcpyToSymbol    (  DFT0,  FT0,   sizeof(uint32_t)*256  ));
+	/* CUDA_CALL(cudaMemcpyToSymbol    (  DFT0,  FT0,   sizeof(uint32_t)*256  ));
 	 CUDA_CALL(cudaMemcpyToSymbol    (  DFT1,  FT1,   sizeof(uint32_t)*256  ));
 	 CUDA_CALL(cudaMemcpyToSymbol    (  DFT2,  FT2,   sizeof(uint32_t)*256  ));
 	 CUDA_CALL(cudaMemcpyToSymbol    (  DFT3,  FT3,   sizeof(uint32_t)*256  ));
-	 CUDA_CALL(cudaMemcpyToSymbol    (  DFSb,  FSb,   sizeof(char)*256  ));
-	aeskernel<<<1,height*width/4>>>(dctx,dnonce_counter,dbuf,pitch_nc,pitch_buf);
+	 CUDA_CALL(cudaMemcpyToSymbol    (  DFSb,  FSb,   sizeof(char)*256  ));*/
+
+	 CUDA_CALL(cudaMemcpy(  RDFT0,  FT0,   sizeof(uint32_t)*256,cudaMemcpyHostToDevice  ));
+	 CUDA_CALL(cudaMemcpy(  RDFT1,  FT1,   sizeof(uint32_t)*256,cudaMemcpyHostToDevice  ));
+	 CUDA_CALL(cudaMemcpy(  RDFT2,  FT2,   sizeof(uint32_t)*256,cudaMemcpyHostToDevice  ));
+	 CUDA_CALL(cudaMemcpy(  RDFT3,  FT3,   sizeof(uint32_t)*256,cudaMemcpyHostToDevice ));
+	 CUDA_CALL(cudaMemcpy(  RDFSb,  FSb,   sizeof(char)*256, cudaMemcpyHostToDevice  ));
+	aeskernel<<<1,height*width/4>>>(dctx,dnonce_counter,dbuf,pitch_nc,pitch_buf,
+                       RDFT0,RDFT1,RDFT2,RDFT3,RDFSb);
          cudaDeviceSynchronize();
     CUDA_CALL(cudaMemcpy2D(buf,width,dbuf,pitch_buf,width,height,cudaMemcpyDeviceToHost));
 //	aeskernel<<<1,height*width/4>>>(dctx,dnonce_counter,dbuf,pitch_nc,pitch_buf);
@@ -169,7 +193,8 @@ int main()
         } else {
              std::cout<< "encryption test failed"<< std::endl; 
         }   
-	aeskernel<<<1,height*width/4>>>(dctx,dnonce_counter,dbuf,pitch_nc,pitch_buf);
+	aeskernel<<<1,height*width/4>>>(dctx,dnonce_counter,dbuf,pitch_nc,pitch_buf,
+                       RDFT0,RDFT1,RDFT2,RDFT3,RDFSb);
          cudaDeviceSynchronize();
     CUDA_CALL(cudaMemcpy2D(buf,width,dbuf,pitch_buf,width,height,cudaMemcpyDeviceToHost));
      std::cout<< "GPU AESCTR decryption done"<< std::endl; 
@@ -204,6 +229,11 @@ int main()
         cudaFree (dbuf)	;
         cudaFree(dnonce_counter);
         cudaFree(dctx);
+        cudaFree(RDFT0);
+        cudaFree(RDFT1);
+        cudaFree(RDFT2);
+        cudaFree(RDFT3);
+        cudaFree(RDFSb);
     CUDA_CALL( cudaDeviceReset());
     return 0;
 }
