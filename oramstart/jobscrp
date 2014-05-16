@@ -5,5 +5,5 @@
 #SBATCH -p gpudev
 #SBATCH -t 02:00:00
 #SBATCH --mail-user pan19@utexas.edu  #Replace with your email id 
-#nvprof --print-gpu-trace oramgpu >> output
-cuda-memcheck ./oramgpu >> output 
+nvprof --print-gpu-trace oramgpu >> output
+#cuda-memcheck ./oramgpu >> output 

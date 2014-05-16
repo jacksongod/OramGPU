@@ -22,7 +22,7 @@
 
 #define STASHSIZE 256
 
-#define ACCESSNUM 10000
+#define ACCESSNUM 1000
 /**
  * Main
  */
@@ -55,9 +55,9 @@ __global__ void oramshare(uint16_t* position_table, uint32_t* access_script,uint
         __shared__ uint32_t stashcount;
 		__shared__ uint32_t maxstashcount;
         __shared__ uint32_t pathcount;
-        __shared__ uint32_t stashaccessloc[(LEAFNUMLOG+1)*BLOCKPERBUCKET];
-        __shared__ uint32_t writebackloc[(LEAFNUMLOG+1)*BLOCKPERBUCKET];
-        __shared__ uint32_t  datastash[STASHSIZE*(BLOCKSIZE/4)];       
+        __shared__ uint32_t stashaccessloc[(LEAFNUMLOG+1)*BLOCKPERBUCKET]; //2*12*4B = 96B
+        __shared__ uint32_t writebackloc[(LEAFNUMLOG+1)*BLOCKPERBUCKET];   //2*12*4B = 96B
+        __shared__ uint32_t  datastash[STASHSIZE*(BLOCKSIZE/4)];          //4B * 256*16 = 16KB
 		//__shared__ TDBlock<BLOCKSIZE> garbage_collector; 
 		//__shared__ uint32_t blockinstash;  
        
@@ -105,8 +105,8 @@ __global__ void oramshare(uint16_t* position_table, uint32_t* access_script,uint
 	    //	pathidtemp = localtable[accessid/2] ;
             //    pathid =   0xffff&(pathidtemp  >>((accessid&0x1)<<4)); 
   //       int myblockid ;
-        if(tid <STASHSIZE)  {
-			streepathlock[tid] = 0;}
+       // if(tid <STASHSIZE)  {
+	//		streepathlock[tid] = 0;}
 		//	 myblockid = stash[tid] ;
 		//	if(blockid == myblockid &&stashlock[tid] !=0){
 		//		blockinstash = 1; 
@@ -135,7 +135,7 @@ __global__ void oramshare(uint16_t* position_table, uint32_t* access_script,uint
                     stash[startindex] = id &0xfff; 
                     
                  startindex = (startindex+1)%STASHSIZE; 
-                    atomicSub(&stashcount,1);
+                  //  atomicSub(&stashcount,1);
               //       printf("id: %d, data id %d\n",tid,stash[startindex%STASHSIZE]);
               //      checktable[i*24+tid] = stash[startindex] ;
               //      checktable2[i*24+tid] = pathid;
@@ -152,11 +152,11 @@ __global__ void oramshare(uint16_t* position_table, uint32_t* access_script,uint
                      
          }  
          __syncthreads();
-         if (tid==0 ) atomicMin(&maxstashcount, stashcount);
-		 if(i==80){
+        // if (tid==0 ) atomicMin(&maxstashcount, stashcount);
+	//	 if(i==80){
 
-			 int myball = 1000;
-		 }
+	//		 int myball = 1000;
+	//	 }
 		
          if (tid < STASHSIZE){
              if (stashlock[tid]!=0){
@@ -176,14 +176,14 @@ __global__ void oramshare(uint16_t* position_table, uint32_t* access_script,uint
                        writebackloc[blockloc] = tid; 
                        metatree[treeindex].id[0] = 0x8000|myblockid;
                        stashlock[tid] = 0;
-                       atomicAdd(&stashcount,1);
+                //       atomicAdd(&stashcount,1);
                     //   atomicSub(&pathcount,1);
                        break; 
                    } else if (!atomicCAS(&treepathlock[(level<<1)+1],0,1)){
                        writebackloc[blockloc+1] = tid; 
                        metatree[treeindex].id[1] = 0x8000|myblockid;
                        stashlock[tid] = 0;
-                       atomicAdd(&stashcount,1);
+              //         atomicAdd(&stashcount,1);
                      //  atomicSub(&pathcount,1);
                        break;
                    } 
@@ -273,14 +273,14 @@ __global__ void oramshare(uint16_t* position_table, uint32_t* access_script,uint
 	     checktable2[i].data[stid] = datastash[expectedblockindex*16+stid];   
 
          }  
-		 __syncthreads();
+	//	 __syncthreads();
 	
      
 	}
 
     
 
-    if (tid == 0)    printf("max stash size %ud\n",256-maxstashcount);
+    //if (tid == 0)    printf("max stash size %ud\n",256-maxstashcount);
 }
 __global__ void setup_kernel(curandState *state)
 {
