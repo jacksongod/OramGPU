@@ -26,10 +26,11 @@ class TDBlock {
 
 public:
   uint32_t data[SIZE/4];
-  
+  unsigned char nonce[SIZE/4];   
   void init(void){
      for (int i=0; i< SIZE/4; i++){
          data[i] = rand();         
+         nonce[i] = rand()%256;
      }
 
   }
