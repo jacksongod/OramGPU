@@ -7,13 +7,14 @@
 #include "bucket.h"
 #include <curand_kernel.h>
 #include <cuda.h>
+#include "atomicfifo.h"
 
-#define CUDATHREADNUMLOG 10
+#define CUDATHREADNUMLOG 9
 #define CUDATHREADNUM (1<<CUDATHREADNUMLOG)
 
 
 #define BLOCKNUMLOG 12
-#define MAPSIZEPERTHREAD 4
+#define MAPSIZEPERTHREAD 8
 #define BLOCKSIZE 64
 #define LEAFNUMLOG  11
 #define TREESIZE (1<<LEAFNUMLOG)*2//-1
@@ -49,7 +50,10 @@ __global__ void oramshare(uint16_t* position_table, uint32_t* access_script,uint
         __shared__ uint32_t streepathlock[STASHSIZE];    //1kB
         __shared__ uint16_t stash [STASHSIZE];            //256B
         __shared__ uint32_t expectedblockindex; 
-        __shared__ uint32_t stashlock[STASHSIZE];          //1kB
+   //     __shared__ uint32_t stashlock[STASHSIZE];          //1kB
+        __shared__ uint32_t camfifo[STASHSIZE]; 
+        __shared__ int32_t front,end;
+        __shared__ uint32_t  mutex; 
 	__shared__ uint16_t localtable[1<<(BLOCKNUMLOG)];   //8KB  when blocknumlog = 12
         __shared__  uint16_t newposition; 
         __shared__ uint32_t stashcount;
@@ -62,22 +66,31 @@ __global__ void oramshare(uint16_t* position_table, uint32_t* access_script,uint
 		//__shared__ uint32_t blockinstash;  
        
     //copy position table from global memory to shared memory
-       localtable[tid*MAPSIZEPERTHREAD] = position_table[tid*MAPSIZEPERTHREAD];
-       localtable[tid*MAPSIZEPERTHREAD+1] = position_table[tid*MAPSIZEPERTHREAD+1];
-       localtable[tid*MAPSIZEPERTHREAD+2] = position_table[tid*MAPSIZEPERTHREAD+2];
-       localtable[tid*MAPSIZEPERTHREAD+3] = position_table[tid*MAPSIZEPERTHREAD+3];
+     //  localtable[tid*MAPSIZEPERTHREAD] = position_table[tid*MAPSIZEPERTHREAD];
+     //  localtable[tid*MAPSIZEPERTHREAD+1] = position_table[tid*MAPSIZEPERTHREAD+1];
+     //  localtable[tid*MAPSIZEPERTHREAD+2] = position_table[tid*MAPSIZEPERTHREAD+2];
+     //  localtable[tid*MAPSIZEPERTHREAD+3] = position_table[tid*MAPSIZEPERTHREAD+3];
      //localtable[tid*2] = (position_table[tid*MAPSIZEPERTHREAD+1]<<16) | position_table[tid*MAPSIZEPERTHREAD];
      //localtable[tid*2+1] = (position_table[tid*MAPSIZEPERTHREAD+3]<<16) | position_table[tid*MAPSIZEPERTHREAD+2];
  
-    //memcpy(&localtable[tid*MAPSIZEPERTHREAD],&position_table[tid*MAPSIZEPERTHREAD],sizeof(uint16_t)*MAPSIZEPERTHREAD);
+    memcpy(&localtable[tid*MAPSIZEPERTHREAD],&position_table[tid*MAPSIZEPERTHREAD],sizeof(uint16_t)*MAPSIZEPERTHREAD);
     // copy metadata tree from global memory to shared memory
-    memcpy(&metatree[tid*4], &oramtree[tid*4],sizeof(OramB)*4);
-   if (tid <256)  stashlock[tid] = 0;
+    memcpy(&metatree[tid*MAPSIZEPERTHREAD], &oramtree[tid*MAPSIZEPERTHREAD],sizeof(OramB)*MAPSIZEPERTHREAD);
+   if (tid <256) {
+	// stashlock[tid] = 0;
+       camfifo[tid] = tid; 
+       stash[tid] = 0xffff; 
+   }
   // if (tid< 24) treepathlock[tid] = 0;
   // if (tid<12) streepathlock[tid] = 0;
    //if (tid ==256) pathcount = 24;
-   if (tid ==512) stashcount = STASHSIZE;
+   if (tid ==511) {
+	stashcount = STASHSIZE;
+         end = mutex = 0; 
+        front = STASHSIZE -1; 
+   }
    if(tid == 384) maxstashcount = 256;
+   
   //  if (tid< (LEAFNUMLOG+1)){
   //  memset(&treepathlock[tid],0x0,4);
     
@@ -93,7 +106,7 @@ __global__ void oramshare(uint16_t* position_table, uint32_t* access_script,uint
     //uint32_t accessid; 
     //bool r_foundposition=false;
     //bool w_foundposition=false;; 
-    int startindex= tid*8 ; //tid *8
+   // int startindex= tid/2 ; //tid *8
     uint16_t blockid;
 	for (int i = 0 ; i<ACCESSNUM ; i++ ){
                blockid = access_script[i];
@@ -118,20 +131,21 @@ __global__ void oramshare(uint16_t* position_table, uint32_t* access_script,uint
   //      __syncthreads();
 
 		//if (!blockinstash) {
-         if (tid< 24){  //copy entire path to local registers (12 levels, 24 blocks)
-               treepathlock[tid] = 0;
+         if (tid< 384 && tid%16==0){  //copy entire path to local registers (12 levels, 24 blocks)
+               int stid = tid /16;
+               treepathlock[stid] = 0;
                 //pathcount = 24; 
             //printf("rand : %d is %d\n",tid,  (unsigned)(curand(&localrandState))%(1<<LEAFNUMLOG));
-           int treeindex = calcindex(tid/2, pathid);
+           int treeindex = calcindex(stid/2, pathid);
            //printf("id: %d, index %d\t",tid,treeindex );
-           uint16_t id = metatree[treeindex].id[tid%2];
-		   metatree[treeindex].id[tid%2] = 0;
+           uint16_t id = metatree[treeindex].id[stid%2];
+		   metatree[treeindex].id[stid%2] = 0;
            if((id>>15) == 1){   // if data is valid 
             // printf("id: %d valid data \t ", tid); 
-              while(true){
+              /*while(true){
                  if (!atomicCAS(&stashlock[startindex],0,1 )){
             //         printf("id: %d, foundposition\t",tid);
-                    stashaccessloc[tid] = startindex;
+                    stashaccessloc[stid] = startindex;
                     stash[startindex] = id &0xfff; 
                     
                  startindex = (startindex+1)%STASHSIZE; 
@@ -143,11 +157,23 @@ __global__ void oramshare(uint16_t* position_table, uint32_t* access_script,uint
                     break; 
                  }
                  startindex = (startindex+1)%STASHSIZE; 
-			  }
+	       } */
             //   printf("out\n");
-		   }else{
-			   stashaccessloc[tid] = 999;
-		   }
+               bool needlock = true; 
+               int positionindex ; 
+                       while(needlock) { 
+                       	if (getlockattempt(&mutex)) {
+                                positionindex = fifopop(camfifo, &front,&end);
+                       		releaselock(&mutex);
+                                needlock = false; 
+                        }
+
+                       }
+              stashaccessloc[stid] = positionindex;
+              stash[positionindex] = id & 0xfff;
+		 }else{
+		   stashaccessloc[stid] = 999;
+         	   }
 		   
                      
          }  
@@ -159,7 +185,7 @@ __global__ void oramshare(uint16_t* position_table, uint32_t* access_script,uint
 	//	 }
 		
          if (tid < STASHSIZE){
-             if (stashlock[tid]!=0){
+             if (stash[tid]!=0xffff){
 		   int myblockid = stash[tid];
 		   if(myblockid == blockid ){
                       localtable[myblockid] = newposition;
@@ -175,14 +201,34 @@ __global__ void oramshare(uint16_t* position_table, uint32_t* access_script,uint
                    if(!atomicCAS(&treepathlock[level<<1],0,1)){
                        writebackloc[blockloc] = tid; 
                        metatree[treeindex].id[0] = 0x8000|myblockid;
-                       stashlock[tid] = 0;
+                       bool needlock = true; 
+                       while(needlock) { 
+                       	if (getlockattempt(&mutex)) {
+                       		fifopush(camfifo,&front,&end,tid);
+                       		releaselock(&mutex);
+                                needlock = false; 
+                        }
+
+                       }
+                      stash[tid] = 0xffff;
+                      // stashlock[tid] = 0;
                 //       atomicAdd(&stashcount,1);
                     //   atomicSub(&pathcount,1);
                        break; 
                    } else if (!atomicCAS(&treepathlock[(level<<1)+1],0,1)){
                        writebackloc[blockloc+1] = tid; 
                        metatree[treeindex].id[1] = 0x8000|myblockid;
-                       stashlock[tid] = 0;
+                       bool needlock = true; 
+                       while(needlock) { 
+                       	if (getlockattempt(&mutex)) {
+                       		fifopush(camfifo,&front,&end,tid);
+                       		releaselock(&mutex);
+                                needlock = false; 
+                        }
+
+                       }
+                      stash[tid] = 0xffff;
+                      // stashlock[tid] = 0;
               //         atomicAdd(&stashcount,1);
                      //  atomicSub(&pathcount,1);
                        break;
@@ -240,11 +286,12 @@ __global__ void oramshare(uint16_t* position_table, uint32_t* access_script,uint
 
 
          }*/
-		 else if(tid<896&&tid>511) {          //other threads bring in the data from tree to data stash. 
-              int stid = tid - STASHSIZE*BLOCKPERBUCKET; 
-              int bucketid= stid/16;
+		// else if(tid<896&&tid>511) {          //other threads bring in the data from tree to data stash. 
+           if (tid< 384){
+              //int stid = tid - STASHSIZE*BLOCKPERBUCKET; 
+              int bucketid= tid/16;
              int treeindex = calcindex(bucketid/2, pathid);
-              int whichdata = stid%16;
+              int whichdata = tid%16;
               int whichblock = bucketid%2;
 			  volatile int gabarge;
 			    if(stashaccessloc[bucketid] !=999){           //999 means this block in the tree path is empty
