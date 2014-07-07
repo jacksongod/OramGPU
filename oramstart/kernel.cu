@@ -23,7 +23,7 @@
 
 #define STASHSIZE 256
 
-#define ACCESSNUM 1000
+#define ACCESSNUM 10000
 /**
  * Main
  */

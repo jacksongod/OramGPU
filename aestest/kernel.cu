@@ -9,7 +9,7 @@ printf("Error at %s:%d\n",__FILE__,__LINE__); \
 return EXIT_FAILURE;}} while(0)
 
 
-__device__ void aes_fround (int secondposition, int thirdposition,int fourthposition, int& outword, int& inword,uint32_t RK,
+__device__ __forceinline__ void aes_fround (int secondposition, int thirdposition,int fourthposition, int& outword, int& inword,uint32_t RK,
                                     const uint32_t* __restrict__ RDFT0,
                                     const uint32_t* __restrict__ RDFT1,
                                     const uint32_t* __restrict__ RDFT2,
@@ -26,7 +26,7 @@ __device__ void aes_fround (int secondposition, int thirdposition,int fourthposi
 
 
 }
-__device__ void aes_finalfround (int secondposition, int thirdposition,int fourthposition, int& outword, int& inword,uint32_t RK,
+__device__ __forceinline__ void aes_finalfround (int secondposition, int thirdposition,int fourthposition, int& outword, int& inword,uint32_t RK,
                                     const unsigned char* __restrict__ RDFSb
                                                                                        ){
 	int ysecond = __shfl(inword, secondposition);

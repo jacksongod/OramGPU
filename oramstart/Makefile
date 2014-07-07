@@ -1,7 +1,7 @@
 include ./make.config
 
 CC := nvcc
-NVCCFLAG :=  -O2  -arch=compute_35 -code=sm_35 -lineinfo --machine 64
+NVCCFLAG :=    -arch=compute_35 -code=sm_35 -lineinfo --machine 64 -Xcompiler -rdynamic
 PTXASFLAG:= --ptxas-options=-v -Xptxas -dlcm=cg
 INCLUDE := ./
 
