@@ -1,0 +1,10 @@
+#!/bin/sh
+#BATCH -J test  #Job Name
+#SBATCH -o result%j.txt
+#SBATCH -n 4
+#SBATCH -p gpu
+#SBATCH -t 02:00:00
+#SBATCH --mail-user pan19@utexas.edu  #Replace with your email id 
+#./oramgpu >> output
+#nvprof --print-gpu-trace ./oramgpu >> output
+cuda-memcheck --tool racecheck ./oramgpu >> output 
