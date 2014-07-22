@@ -7,4 +7,5 @@
 #SBATCH --mail-user pan19@utexas.edu  #Replace with your email id 
 #./oramgpu >> output
 #nvprof --print-gpu-trace ./oramgpu >> output
-cuda-memcheck --tool racecheck ./oramgpu >> output 
+#cuda-memcheck --tool racecheck ./oramgpu >> output 
+cuda-memcheck ./oramgpu >> output 

@@ -16,9 +16,9 @@ __global__ void radixsortkernel(uint32_t *in_buf,
                                    uint32_t* keyout_buf
 					   )
 {
-	typedef cub::BlockLoad<uint32_t*, 256/4, 4, cub::BLOCK_LOAD_TRANSPOSE> BlockLoad;
-	typedef cub::BlockStore<uint32_t*, 256/4, 4, cub::BLOCK_STORE_TRANSPOSE> BlockStore;
-	typedef cub::BlockRadixSort<uint32_t, 256/4, 4,uint32_t/*, 4,true,cub::BLOCK_SCAN_RAKING*/  > BlockRadixSort;
+	typedef cub::BlockLoad<uint32_t*, 256, 1, cub::BLOCK_LOAD_TRANSPOSE> BlockLoad;
+	typedef cub::BlockStore<uint32_t*, 256, 1, cub::BLOCK_STORE_TRANSPOSE> BlockStore;
+	typedef cub::BlockRadixSort<uint32_t, 256, 1,uint32_t/*, 4,true,cub::BLOCK_SCAN_RAKING*/  > BlockRadixSort;
 	__shared__ union {
         	typename BlockLoad::TempStorage       load; 
        		typename BlockStore::TempStorage      store; 
@@ -34,11 +34,11 @@ __global__ void radixsortkernel(uint32_t *in_buf,
 	BlockLoad(temp_storage.load).Load( in_buf,v_data);
 	BlockLoad(key_storage.load).Load( keyin_buf,k_data);
 	__syncthreads(); 
-	
-	BlockRadixSort().Sort(k_data,v_data,3,15);
+	BlockRadixSort(temp_storage.sort).Sort(k_data,v_data);
 	__syncthreads(); 
 	BlockStore(temp_storage.store).Store(out_buf, v_data );
-	BlockStore(key_storage.store).Store(keyout_buf, k_data );
+        keyout_buf[threadIdx.x] = k_data[0];	
+	//BlockStore(key_storage.store).Store(keyout_buf, k_data );
 	//}
 	
 }
@@ -53,8 +53,9 @@ int main()
 	uint32_t hkeyout_array[size] ; 
 	for (int i = 0 ; i<size; i++ ){
 		hin_array[i] = i;
-		hkey_array[i] = rand()%1024;
+		hkey_array[i] =(i%2==0)? 2:1;
 	}
+//        hkey_array[size-1] = 1;
 	std::cout << "input value : "<< std::endl; 
 	for (int i = 0; i<size ; i++){
 		std::cout<< hin_array[i] << " ";

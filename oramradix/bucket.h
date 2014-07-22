@@ -8,7 +8,7 @@ public:
   uint16_t id[B];
   void init(int a){
     for(int i=0; i< B; i++){
-       id[i] = ( 0x8000 |(a++));
+       id[i] = ( (a++));
     }
   }    
   
@@ -28,7 +28,7 @@ public:
 
   void init(int a){
     for(int i=0; i< tsize; i++){
-       bucket[i] = ( 0x8000 |(a++));
+       bucket[i] = ( (a++));
     }
   }    
   void initzero(void){
@@ -49,7 +49,7 @@ public:
 template<int tsize, int idsize>
 class MetaTree{
 public:
-  SubTree<tsize> idlist[idsize];
+  Subtree<tsize> idlist[idsize];
 
   void initall(){
     for(int i=0; i< idsize; i++){
